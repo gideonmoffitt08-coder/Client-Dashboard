@@ -285,6 +285,8 @@ select.finp{appearance:none;cursor:pointer}
       <div class="sb-item" id="nav-invoices" onclick="navigate('invoices')"><span class="si">💳</span>Invoices<span class="sb-badge blue" id="inv-badge"></span></div>
       <div class="sb-item" id="nav-tickets" onclick="navigate('tickets')"><span class="si">🎫</span>Tickets<span class="sb-badge" id="tkt-badge"></span></div>
     </div>
+    <div class="sb-item" id="nav-history" onclick="navigate('history')"><span class="si">📋</span>History</div>
+
 
     <div class="sb-section">
       <div class="sb-section-label">Clients</div>
@@ -300,7 +302,9 @@ select.finp{appearance:none;cursor:pointer}
       <div id="page-title">Overview</div>
       <div class="tb-actions">
         <button class="tb-btn" id="tb-primary-btn" onclick="tbPrimaryAction()">▶ Run All Checks</button>
-        <div class="tb-avatar">GM</div>
+        <span id="scheduler-pill" onclick="toggleScheduler()" style="font-size:10px;font-weight:700;padding:5px 12px;border-radius:20px;border:1px solid var(--border2);color:var(--dim);cursor:pointer;font-family:'Instrument Sans',sans-serif;transition:all .2s">⏱ Auto: OFF</span>
+<div class="tb-avatar">GM</div>
+
       </div>
     </div>
 
@@ -416,7 +420,9 @@ function defaultData(){
       {id:2,clientId:1,title:'Gallery images loading slow on mobile',priority:'medium',status:'progress',date:'Apr 28, 2025'},
       {id:3,clientId:1,title:'Update business hours in footer',priority:'low',status:'closed',date:'Apr 20, 2025'},
     ],
-    nextId: 10
+    nextId: 10,
+history: []
+
   };
 }
 
@@ -483,7 +489,8 @@ function navigate(page){
   closeSidebar();
   renderSidebar();
 
-  const titles = {overview:'Overview',clients:'All Clients',invoices:'Invoices',tickets:'Support Tickets',client: getClient(selectedClientId)?.name||'Client'};
+  const titles = {overview:'Overview',clients:'All Clients',invoices:'Invoices',tickets:'Support Tickets',client:getClient(selectedClientId)?.name||'Client',history:'Audit History'};
+
   document.getElementById('page-title').textContent = titles[page]||page;
 
   const btn = document.getElementById('tb-primary-btn');
@@ -493,7 +500,8 @@ function navigate(page){
   else if(page==='tickets'){btn.textContent='＋ New Ticket';btn.style.display='';}
   else if(page==='client'){btn.textContent='▶ Run Diagnostics';btn.style.display='';}
 
-  const renders = {overview:renderOverview,clients:renderClients,invoices:renderInvoices,tickets:renderTickets,client:renderClientDetail};
+  const renders = {overview:renderOverview,clients:renderClients,invoices:renderInvoices,tickets:renderTickets,client:renderClientDetail,history:renderHistory};
+
   if(renders[page]) renders[page]();
 }
 
@@ -991,10 +999,42 @@ function executeDelete(){
   navigate(DB.clients.length?'clients':'clients');
   renderSidebar();
 }
+// ── History & Auto-Scheduler ──────────────────────────────────────────────────
+function saveAuditToHistory(){
+  const entry={id:Date.now(),timestamp:new Date().toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}),clients:DB.clients.map(c=>({id:c.id,name:c.name,status:c.status,score:c.score,url:c.url,issues:Object.values(c.checks||{}).filter(r=>r.pass===false).map(r=>r.detail)})),issuesFound:DB.clients.reduce((n,c)=>n+Object.values(c.checks||{}).filter(r=>r.pass===false).length,0),allHealthy:DB.clients.every(c=>c.status==='up')};
+  if(!DB.history)DB.history=[];
+  DB.history.unshift(entry);
+  if(DB.history.length>20)DB.history=DB.history.slice(0,20);
+  save();
+}
+
+function renderHistory(){
+  const history=DB.history||[];
+  if(history.length===0){document.getElementById('page').innerHTML=`<div class="page-section"><div class="empty-state"><div class="empty-icon">📋</div><div class="empty-head">No audit history yet</div><div class="empty-sub">Run your first audit to start tracking</div></div><button class="tb-btn" onclick="runAllChecks()" style="width:100%;padding:14px;border-radius:12px;font-size:14px;margin-top:12px">▶ Run First Audit</button></div>`;return;}
+  const rows=history.map(e=>{
+    const col=e.allHealthy?'var(--green)':e.issuesFound>2?'var(--red)':'var(--amber)';
+    const icon=e.allHealthy?'✅':e.issuesFound>2?'🔴':'⚠️';
+    const clients=e.clients.map(c=>`<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);font-size:11px"><span>${c.status==='up'?'🟢':c.status==='down'?'🔴':'🟡'}</span><span style="flex:1;color:var(--text)">${c.name}</span><span style="font-family:'JetBrains Mono',monospace;color:${c.score>=80?'var(--green)':c.score>=50?'var(--amber)':'var(--red)'}">${c.score!=null?c.score+'%':'—'}</span><span style="color:${c.issues.length?'var(--red)':'var(--green)'};font-size:10px">${c.issues.length?c.issues.length+' issue'+(c.issues.length>1?'s':''):'Clean'}</span></div>`).join('');
+    return `<div class="card" style="margin-bottom:12px"><div class="card-hd" style="cursor:pointer" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'"><span class="card-hd-title" style="display:flex;align-items:center;gap:8px">${icon} ${e.timestamp}</span><span style="font-size:11px;color:${col};font-weight:700">${e.allHealthy?'All Clear':e.issuesFound+' issue'+(e.issuesFound!==1?'s':'')} · ${e.clients.length} sites</span></div><div style="padding:0 16px 4px;display:none">${clients}</div></div>`;
+  }).join('');
+  const issueCount=history.filter(e=>!e.allHealthy).length;
+  document.getElementById('page').innerHTML=`<div class="page-section"><div class="stat-grid" style="margin-bottom:16px"><div class="stat-card blue"><div class="stat-label">Total Audits</div><div class="stat-val blue">${history.length}</div><div class="stat-sub">Last 20 stored</div></div><div class="stat-card red"><div class="stat-label">Had Issues</div><div class="stat-val red">${issueCount}</div><div class="stat-sub">Out of ${history.length}</div></div></div><div class="section-hd"><div class="section-title">Audit History</div><div class="section-action" onclick="if(confirm('Clear all history?')){DB.history=[];save();renderHistory()}">Clear All</div></div>${rows}</div>`;
+}
+
+let _schedTimer=null;
+function startScheduler(){if(_schedTimer)clearInterval(_schedTimer);_schedTimer=setInterval(async()=>{await runAllChecks();},2*60*60*1000);localStorage.setItem('ywv_sched','on');updateSchedulerUI();}
+function stopScheduler(){if(_schedTimer)clearInterval(_schedTimer);_schedTimer=null;localStorage.setItem('ywv_sched','off');updateSchedulerUI();}
+function toggleScheduler(){_schedTimer?stopScheduler():startScheduler();}
+function updateSchedulerUI(){const el=document.getElementById('scheduler-pill');if(!el)return;const on=!!_schedTimer;el.textContent=on?'⏱ Auto: ON':'⏱ Auto: OFF';el.style.color=on?'var(--green)':'var(--dim)';el.style.borderColor=on?'rgba(18,196,134,.3)':'var(--border2)';}
+
+const _origRunAll=runAllChecks;
+runAllChecks=async function(){await _origRunAll();saveAuditToHistory();if(currentPage==='history')renderHistory();};
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 renderSidebar();
 navigate('overview');
+if(localStorage.getItem('ywv_sched')==='on') startScheduler();
+
 </script>
 </body>
 </html>
